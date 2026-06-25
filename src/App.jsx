@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Clock, Users, CalendarDays, LayoutDashboard, FileText, Activity, LogOut } from "lucide-react";
+import { Clock, Users, CalendarDays, LayoutDashboard, FileText, Activity, LogOut, UserCog } from "lucide-react";
 import { supabase, configError } from "./lib/supabase";
 import { useAuth } from "./lib/useAuth";
 import { todayKey } from "./lib/policy";
@@ -119,13 +119,21 @@ function Console({ profile, isAdmin, signOut, refreshProfile }) {
     setLeaves(leaves.filter((l) => l.id !== id));
   };
 
-  // ---- employees (admin) ----
+  // ---- employees ----
+  // saveEmployee handles three cases through the one EmployeeModal:
+  //   1. Admin inviting a new member          -> writes pending_invites
+  //   2. Admin editing an existing member      -> updates that profiles row
+  //   3. A member editing THEIR OWN profile    -> updates their own row
+  // Cases 2 and 3 are the same UPDATE; RLS allows it when id = auth.uid()
+  // (your own row) OR public.is_admin() (anyone's), so no special path needed.
   const saveEmployee = async (emp) => {
     const payload = { name: emp.name, role: emp.role, dept: emp.dept, join_date: emp.join_date, schedule: emp.schedule };
     if (emp.id) {
       const { data, error } = await supabase.from("profiles").update(payload).eq("id", emp.id).select().single();
-      if (error) return flash("Not allowed");
-      setEmployees(employees.map((e) => (e.id === emp.id ? data : e)));
+      if (error) return flash("Could not save");
+      setEmployees((prev) => prev.some((e) => e.id === data.id) ? prev.map((e) => (e.id === data.id ? data : e)) : [...prev, data]);
+      if (emp.id === profile.id) refreshProfile?.(); // keep header/me in sync on self-edit
+      flash("Saved");
     } else {
       // Admin pre-registers someone before their first login (matched by email on signup).
       const { data, error } = await supabase.from("pending_invites").upsert({ email: emp.email, ...payload }, { onConflict: "email" }).select().single();
@@ -154,6 +162,9 @@ function Console({ profile, isAdmin, signOut, refreshProfile }) {
 
   const me = useMemo(() => employees.find((e) => e.id === profile.id) || profile, [employees, profile]);
 
+  // Open the existing EmployeeModal on the current user's own row.
+  const editMyProfile = () => setEmpModal(me);
+
   const nav = [
     { id: "dashboard", label: "Today", icon: LayoutDashboard },
     { id: "clock", label: "Clock", icon: Clock },
@@ -177,6 +188,7 @@ function Console({ profile, isAdmin, signOut, refreshProfile }) {
             <span className="hp-time">{now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true })}</span>
             <span className="hp-day">{now.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}</span>
           </div>
+          <button className="hp-icobtn" title="Edit my profile" onClick={editMyProfile}><UserCog size={18} /></button>
           <button className="hp-icobtn" title={`Sign out (${profile.email})`} onClick={signOut}><LogOut size={18} /></button>
         </div>
       </header>
