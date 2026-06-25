@@ -1,0 +1,45 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+/* ===========================================================================
+   Hoppity HR — Tailwind v4 theme. All design tokens live here (CSS-first
+   config). This is the ONLY stylesheet; components style themselves inline.
+   Tokens auto-generate utilities: --color-paper -> bg-paper/text-paper,
+   --font-display -> font-display, --shadow-card -> shadow-card, etc.
+=========================================================================== */
+@theme {
+  --font-display: "Fraunces", serif;
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --color-paper: #f6f3ec;
+  --color-panel: #ffffff;
+  --color-panel2: #f0ece2;
+  --color-ink: #211f1d;
+  --color-ink2: #4a463f;
+  --color-soft: #79736a;
+  --color-line: #e4ddcf;
+  --color-line2: #d6cdba;
+
+  --color-teal: #0f6e56;
+  --color-teal-deep: #0c5a47;
+  --color-teal-soft: #e1efe9;
+  --color-saffron: #e8650a;
+  --color-saffron-deep: #c0530a;
+  --color-grn: #2f7d56;
+  --color-grn-soft: #e4f1ea;
+  --color-amber: #b07d09;
+  --color-amber-soft: #f7eed8;
+  --color-red: #b23b2e;
+  --color-red-soft: #f7e4e1;
+  --color-purple: #6d4ad6;
+  --color-purple-soft: #ece6fb;
+
+  --radius-card: 16px;
+
+  --shadow-soft: 0 1px 2px rgba(33,31,29,.04), 0 1px 3px rgba(33,31,29,.05);
+  --shadow-card: 0 4px 14px rgba(33,31,29,.06), 0 1px 3px rgba(33,31,29,.05);
+  --shadow-pop: 0 18px 50px rgba(33,31,29,.10);
+}
+
+body { margin: 0; }
