@@ -2,52 +2,108 @@
 // policy.js — Hoppity Attendance, Leave & Work Culture rules, as pure functions.
 // No React, no Supabase. Encodes the company policy document so the rules live
 // in one auditable place. Import from views and from the edge function.
+//
+// TIMEZONE MODEL (important):
+//   "Civil dates" (a day with no time-of-day, e.g. an attendance date or a
+//   leave start_date) are modeled as Dates anchored at 12:00 UTC and ALWAYS
+//   read with getUTC* methods. Anchoring at noon + UTC getters makes every
+//   date computation independent of the server's timezone — your laptop runs
+//   in IST, but Vercel / Supabase edge functions run in UTC, and the old code
+//   (local getFullYear/getDate/getDay) silently produced UTC days there.
+//
+//   Anything tied to a real instant — "now", or a clock_in/clock_out
+//   timestamptz — is pinned explicitly to Asia/Kolkata. India has no DST and a
+//   fixed +05:30 offset, so this is exact.
 // ---------------------------------------------------------------------------
 
 export const ENTITLEMENT = { PL: 14, SL: 6, CL: 7 }; // 27 annual working days
 export const WORK_START = "11:00";
 export const WORK_END = "18:00";
-export const LATE_AFTER_MIN = 11 * 60 + 15; // 11:15 grace
+export const LATE_AFTER_MIN = 11 * 60 + 15; // 11:15 grace (IST)
 export const FULL_DAY_HOURS = 7;
 export const ALLOWED_DOMAIN = "triffair.com";
 export const WORK_MODES = ["office", "coworking", "home", "travelling"];
 
-// ---- date helpers (local time, IST-safe: never use toISOString for date keys) ----
+export const IST_TZ = "Asia/Kolkata";
+
+// ---- civil-date helpers (UTC-noon anchored, server-TZ-independent) ----
+
+// YYYY-MM-DD for a civil Date.
 export const dKey = (d) => {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 };
-export const parseDate = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
-export const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-export const todayKey = () => dKey(new Date());
+
+// Parse "YYYY-MM-DD" into a civil Date anchored at noon UTC.
+export const parseDate = (s) => {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 12));
+};
+
+export const addDays = (d, n) => { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x; };
+
+// Day of week (0=Sun..6=Sat) for a civil Date, TZ-independent.
+export const dow = (d) => d.getUTCDay();
+
+// The current calendar day in IST as "YYYY-MM-DD", regardless of server TZ.
+export const todayKey = () =>
+  new Intl.DateTimeFormat("en-CA", {
+    timeZone: IST_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+
+// "Today" in IST as a civil Date (noon-UTC anchor). Use this anywhere you'd
+// otherwise reach for `new Date()` as a date-only value.
+export const todayIST = () => parseDate(todayKey());
+
 export const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-export const longDate = (d) => d.toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+
+// Civil dates are UTC-anchored, so read them back in UTC for display.
+export const longDate = (d) =>
+  d.toLocaleDateString("en-IN", { timeZone: "UTC", weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
 // Standard team is off Sat/Sun; Sales & Ops (proposed Wed–Sun) is off Tue/Thu.
 export const weeklyOff = (schedule) => (schedule === "sales-ops" ? [2, 4] : [0, 6]);
 
 export const monthsOfService = (joinStr) => {
   if (!joinStr) return 0;
-  const j = parseDate(joinStr); const n = new Date();
-  return (n.getFullYear() - j.getFullYear()) * 12 + (n.getMonth() - j.getMonth()) - (n.getDate() < j.getDate() ? 1 : 0);
+  const j = parseDate(joinStr); const n = todayIST();
+  return (n.getUTCFullYear() - j.getUTCFullYear()) * 12 + (n.getUTCMonth() - j.getUTCMonth())
+    - (n.getUTCDate() < j.getUTCDate() ? 1 : 0);
 };
 
-// Financial year runs April–March.
-export const fyStartYear = () => { const n = new Date(); return n.getMonth() >= 3 ? n.getFullYear() : n.getFullYear() - 1; };
+// Financial year runs April–March (evaluated in IST).
+export const fyStartYear = () => { const n = todayIST(); return n.getUTCMonth() >= 3 ? n.getUTCFullYear() : n.getUTCFullYear() - 1; };
 export const fyLabel = () => { const y = fyStartYear(); return `FY ${y}\u2013${String(y + 1).slice(2)}`; };
 export const inCurrentFY = (dateStr) => {
   const s = parseDate(`${fyStartYear()}-04-01`); const e = parseDate(`${fyStartYear() + 1}-03-31`);
   const d = parseDate(dateStr); return d >= s && d <= e;
 };
 
-export const minutesOf = (iso) => { const d = new Date(iso); return d.getHours() * 60 + d.getMinutes(); };
-export const hhmm = (iso) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+// ---- real-instant helpers (pinned to IST) ----
+
+// Minutes-since-midnight of a timestamp, in IST wall-clock. Drives late detection.
+export const minutesOf = (iso) => {
+  const p = new Intl.DateTimeFormat("en-GB", {
+    timeZone: IST_TZ, hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(new Date(iso));
+  const h = Number(p.find((x) => x.type === "hour").value) % 24; // guard legacy "24" at midnight
+  const m = Number(p.find((x) => x.type === "minute").value);
+  return h * 60 + m;
+};
+
+// Human-readable clock time in IST (e.g. "11:07 AM").
+export const hhmm = (iso) =>
+  new Date(iso).toLocaleTimeString("en-IN", { timeZone: IST_TZ, hour: "2-digit", minute: "2-digit", hour12: true });
+
+// Elapsed hours between two instants — pure epoch math, TZ-independent.
 export const hoursBetween = (a, b) => Math.max(0, (new Date(b) - new Date(a)) / 3.6e6);
 
+// ---- working-day logic ----
+
 export const isWorkingDay = (schedule, d, holidaySet) => {
-  if (weeklyOff(schedule).includes(d.getDay())) return false;
+  if (weeklyOff(schedule).includes(dow(d))) return false;
   if (holidaySet.has(dKey(d))) return false;
   return true;
 };
@@ -78,7 +134,7 @@ export function dayStatus(emp, dateStr, attendanceByKey, holidaySet, holidays, l
     return { kind: "present", rec, late, hrs, short: hrs != null && hrs < FULL_DAY_HOURS };
   }
   if (holidaySet.has(dateStr)) return { kind: "holiday", label: holidays.find((h) => h.date === dateStr)?.name };
-  if (weeklyOff(emp.schedule).includes(d.getDay())) return { kind: "off" };
+  if (weeklyOff(emp.schedule).includes(dow(d))) return { kind: "off" };
   const lv = leaves.find((l) => l.employee_id === emp.id && l.status === "approved" && dateStr >= l.start_date && dateStr <= l.end_date);
   if (lv) return { kind: "leave", lv };
   if (dateStr < todayKey()) return { kind: "absent" };
@@ -100,7 +156,7 @@ export function validateLeave({ emp, type, start, end, emergency, leaves, holida
     while (cur <= e) { if (isWorkingDay(emp.schedule, cur, holidaySet)) days++; cur = addDays(cur, 1); }
   }
 
-  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const today = todayIST();
   const advance = workingDaysBetween(emp.schedule, today, s, holidaySet);
   const bal = leaveBalance(emp.id, leaves)[type];
   const months = monthsOfService(emp.join_date);

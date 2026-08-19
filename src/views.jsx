@@ -10,78 +10,22 @@ import {
 
 const holSet = (holidays) => new Set(holidays.map((h) => h.date));
 
-/* ============================= DASHBOARD ============================= */
-export function Dashboard({ employees, attendance, leaves, holidays, isAdmin, profile }) {
-  const today = todayKey();
-  const hs = holSet(holidays);
-  const visible = isAdmin ? employees : employees; // roster visible to all; attendance gated by RLS
-  const statuses = visible.map((e) => ({ e, s: dayStatus(e, today, attendance, hs, holidays, leaves) }));
-  const count = (k) => statuses.filter((x) => x.s.kind === k).length;
-  const todayHol = holidays.find((h) => h.date === today)?.name;
-  const pending = isAdmin ? leaves.filter((l) => l.status === "pending") : [];
-
-  return (
-    <div className="hp-stack">
-      <div className="hp-pagehead">
-        <h1 className="hp-h1">{longDate(new Date())}</h1>
-        {todayHol && <span className="hp-pill hp-pill-hol">Company holiday · {todayHol}</span>}
-      </div>
-      <div className="hp-stats">
-        <Stat n={count("present")} label="Clocked in" tone="green" />
-        <Stat n={count("expected")} label="Yet to clock in" tone="amber" />
-        <Stat n={count("leave")} label="On leave" tone="ink" />
-        <Stat n={count("off") + count("holiday")} label="Off / holiday" tone="soft" />
-      </div>
-      <section className="hp-card">
-        <h2 className="hp-h2">Who's around today</h2>
-        <div className="hp-rows">
-          {statuses.map(({ e, s }) => (
-            <div className="hp-row" key={e.id}>
-              <div className="hp-row-main">
-                <span className="hp-name">{e.name}{e.id === profile.id && <em className="hp-you"> · you</em>}</span>
-                <span className="hp-role">{e.role}</span>
-              </div>
-              <StatusBadge s={s} />
-            </div>
-          ))}
-        </div>
-      </section>
-      {pending.length > 0 && (
-        <section className="hp-card">
-          <h2 className="hp-h2">Awaiting approval <span className="hp-count">{pending.length}</span></h2>
-          <div className="hp-rows">
-            {pending.map((l) => {
-              const e = employees.find((x) => x.id === l.employee_id);
-              return (
-                <div className="hp-row" key={l.id}>
-                  <div className="hp-row-main">
-                    <span className="hp-name">{e?.name}</span>
-                    <span className="hp-role">{l.type} · {l.days}d · {l.start_date} to {l.end_date}</span>
-                  </div>
-                  <span className="hp-pill hp-pill-amber">Pending</span>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-    </div>
-  );
-}
-
-function Stat({ n, label, tone }) {
-  return <div className={`hp-stat hp-tone-${tone}`}><span className="hp-stat-n">{n}</span><span className="hp-stat-l">{label}</span></div>;
-}
-
-function StatusBadge({ s }) {
+/* ============================= STATUS BADGE (shared) ============================= */
+// Used by Dashboard.jsx and CredibilityView. revealTimes gates clock-in/out times,
+// late/short flags — everything that would expose *when* someone clocked in. Status
+// (In/Done) and work mode always show. Non-admins pass revealTimes=false for other
+// people; it defaults to true so CredibilityView (self / admin-only data) is unaffected.
+export function StatusBadge({ s, revealTimes = true }) {
   if (s.kind === "present") {
     return (
       <div className="hp-statusline">
         <span className="hp-pill hp-pill-green">{s.rec.clock_out ? "Done" : "In"}</span>
         {s.rec.work_mode && <span className="hp-tag">{s.rec.work_mode}</span>}
-        <span className="hp-mono">{hhmm(s.rec.clock_in)}{s.rec.clock_out ? ` → ${hhmm(s.rec.clock_out)}` : ""}</span>
-        {s.late && <span className="hp-flag">late</span>}
-        {s.short && <span className="hp-flag">short</span>}
+        {revealTimes && s.rec.clock_in && (
+          <span className="hp-mono">{hhmm(s.rec.clock_in)}{s.rec.clock_out ? ` → ${hhmm(s.rec.clock_out)}` : ""}</span>
+        )}
+        {revealTimes && s.late && <span className="hp-flag">late</span>}
+        {revealTimes && s.short && <span className="hp-flag">short</span>}
       </div>
     );
   }

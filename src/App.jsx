@@ -1,12 +1,24 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { BrowserRouter, Routes, Route, Navigate, NavLink } from "react-router-dom";
 import { Clock, Users, CalendarDays, LayoutDashboard, FileText, Activity, LogOut, UserCog } from "lucide-react";
 import { supabase, configError } from "./lib/supabase";
 import { useAuth } from "./lib/useAuth";
 import { todayKey } from "./lib/policy";
-import { Dashboard, ClockView, TeamView, LeaveView, CredibilityView, PolicyView,
+import { ClockView, TeamView, LeaveView, CredibilityView, PolicyView,
   EmployeeModal, LeaveModal, HolidayModal } from "./views";
+import { Dashboard } from "./pages/Dashboard";
 
 export default function App() {
+  // Router wraps everything so NavLink/Routes/Navigate work even on the
+  // pre-console screens. Auth gating still happens in AppInner.
+  return (
+    <BrowserRouter>
+      <AppInner />
+    </BrowserRouter>
+  );
+}
+
+function AppInner() {
   const { loading, session, profile, error, signIn, signOut, isAdmin, refreshProfile } = useAuth();
 
   if (configError) return <Screen><div className="hp-loading">{configError}</div></Screen>;
@@ -39,7 +51,6 @@ function SignIn({ onSignIn, error }) {
 }
 
 function Console({ profile, isAdmin, signOut, refreshProfile }) {
-  const [view, setView] = useState("dashboard");
   const [now, setNow] = useState(new Date());
   const [toast, setToast] = useState(null);
   const [empModal, setEmpModal] = useState(null);
@@ -48,6 +59,7 @@ function Console({ profile, isAdmin, signOut, refreshProfile }) {
 
   const [employees, setEmployees] = useState([]);
   const [attendance, setAttendance] = useState({}); // empId__date -> row
+  const [presence, setPresence] = useState({}); // empId__date -> { clocked_in, clocked_out, work_mode } (booleans only; no times)
   const [leaves, setLeaves] = useState([]);
   const [holidays, setHolidays] = useState([]);
   const [signals, setSignals] = useState([]); // activity_signals rows
@@ -61,17 +73,26 @@ function Console({ profile, isAdmin, signOut, refreshProfile }) {
   const loadAll = useCallback(async () => {
     setBusy(true);
     const from = todayKey(); // load a window; widen if you need history in the UI
-    const [emp, att, lv, hol, sig, pl] = await Promise.all([
+    const [emp, att, lv, hol, sig, pl, pres] = await Promise.all([
       supabase.from("profiles").select("*").eq("active", true).order("name"),
       supabase.from("attendance").select("*").gte("date", addDaysStr(from, -45)),
       supabase.from("leave_requests").select("*").order("applied_on", { ascending: false }),
       supabase.from("holidays").select("*").order("date"),
       supabase.from("activity_signals").select("*").gte("date", addDaysStr(from, -14)),
       supabase.from("daily_plan").select("*").gte("date", addDaysStr(from, -14)),
+      // Booleans-only presence feed — readable for the whole team, exposes no times.
+      // RLS on `attendance` hides other people's raw rows; this view fills that gap.
+      supabase.from("attendance_presence").select("*").gte("date", addDaysStr(from, -45)),
     ]);
+    console.log("presence rows:", pres.error || (pres.data || []).length);
+    console.log("employees fetched:", (emp.data || []).length,
+                (emp.data || []).map((e) => e.id));
+    console.log("presence ids:", (pres.data || []).map((r) => r.employee_id));
     setEmployees(emp.data || []);
     const map = {}; (att.data || []).forEach((r) => { map[`${r.employee_id}__${r.date}`] = r; });
     setAttendance(map);
+    const pmap = {}; (pres.data || []).forEach((r) => { pmap[`${r.employee_id}__${r.date}`] = r; });
+    setPresence(pmap);
     setLeaves(lv.data || []);
     setHolidays(hol.data || []);
     setSignals(sig.data || []);
@@ -166,15 +187,15 @@ function Console({ profile, isAdmin, signOut, refreshProfile }) {
   const editMyProfile = () => setEmpModal(me);
 
   const nav = [
-    { id: "dashboard", label: "Today", icon: LayoutDashboard },
-    { id: "clock", label: "Clock", icon: Clock },
-    { id: "credibility", label: "Signals", icon: Activity },
-    { id: "team", label: "Team", icon: Users },
-    { id: "leave", label: "Leave", icon: CalendarDays },
-    { id: "policy", label: "Policy", icon: FileText },
+    { to: "/dashboard", label: "Today", icon: LayoutDashboard },
+    { to: "/clock", label: "Clock", icon: Clock },
+    { to: "/credibility", label: "Signals", icon: Activity },
+    { to: "/team", label: "Team", icon: Users },
+    { to: "/leave", label: "Leave", icon: CalendarDays },
+    { to: "/policy", label: "Policy", icon: FileText },
   ];
 
-  const shared = { employees, attendance, leaves, holidays, signals, plans, isAdmin, me, profile, flash };
+  const shared = { employees, attendance, presence, leaves, holidays, signals, plans, isAdmin, me, profile, flash };
 
   return (
     <div className="hp-root">
@@ -197,24 +218,28 @@ function Console({ profile, isAdmin, signOut, refreshProfile }) {
         {nav.map((n) => {
           const Icon = n.icon;
           return (
-            <button key={n.id} className={`hp-tab ${view === n.id ? "is-active" : ""}`} onClick={() => setView(n.id)}>
+            <NavLink key={n.to} to={n.to} className={({ isActive }) => `hp-tab ${isActive ? "is-active" : ""}`}>
               <Icon size={16} strokeWidth={2.2} /> {n.label}
-            </button>
+            </NavLink>
           );
         })}
       </nav>
 
       <main className="hp-main">
         {busy ? <div className="hp-loading">Loading…</div> : (
-          <>
-            {view === "dashboard" && <Dashboard {...shared} />}
-            {view === "clock" && <ClockView {...shared} now={now} clockIn={clockIn} clockOut={clockOut} />}
-            {view === "credibility" && <CredibilityView {...shared} />}
-            {view === "team" && <TeamView {...shared} setEmpModal={setEmpModal} archiveEmployee={archiveEmployee}
-              setHolModal={setHolModal} removeHoliday={removeHoliday} />}
-            {view === "leave" && <LeaveView {...shared} setLeaveModal={setLeaveModal} decideLeave={decideLeave} deleteLeave={deleteLeave} />}
-            {view === "policy" && <PolicyView />}
-          </>
+          <Routes>
+            {/* Opening the console (or "/") lands on the dashboard. */}
+            <Route path="/" element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard" element={<Dashboard {...shared} />} />
+            <Route path="/clock" element={<ClockView {...shared} now={now} clockIn={clockIn} clockOut={clockOut} />} />
+            <Route path="/credibility" element={<CredibilityView {...shared} />} />
+            <Route path="/team" element={<TeamView {...shared} setEmpModal={setEmpModal} archiveEmployee={archiveEmployee}
+              setHolModal={setHolModal} removeHoliday={removeHoliday} />} />
+            <Route path="/leave" element={<LeaveView {...shared} setLeaveModal={setLeaveModal} decideLeave={decideLeave} deleteLeave={deleteLeave} />} />
+            <Route path="/policy" element={<PolicyView />} />
+            {/* Unknown paths fall back to the dashboard. */}
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
         )}
       </main>
 
