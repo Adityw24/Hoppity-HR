@@ -56,7 +56,7 @@ const statuses = employees.map((e) => {
                 <span className="hp-role">{e.role}</span>
               </div>
               {/* Only you and admins see clock times; everyone else sees status + work mode. */}
-              <StatusBadge s={s} revealTimes={isAdmin || e.id === profile.id} />
+              <StatusBadge s={s} revealTimes={false} />
             </div>
           ))}
         </div>
